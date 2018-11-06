@@ -150,7 +150,7 @@ For this project, you can start with a spam/ham dataset, then predict the class 
 ## ✖ dplyr::filter()     masks stats::filter()
 ## ✖ dplyr::lag()        masks stats::lag()</code></pre>
 <p>Here, we gather our data</p>
-<pre class="r"><code>file.path &lt;- c(&quot;easy_ham/&quot;, &quot;spam/&quot;, &quot;spam_2/&quot;)</code></pre>
+<pre class="r"><code>file.path &lt;- c(&quot;easy_ham/&quot;, &quot;spam/&quot;, &quot;spam_2/&quot;, &quot;spam_3/&quot;)</code></pre>
 </div>
 <div id="data-cleaning" class="section level1">
 <h1>Data Cleaning:</h1>
@@ -166,11 +166,15 @@ spam</code></pre>
 <pre><code>## &lt;&lt;VCorpus&gt;&gt;
 ## Metadata:  corpus specific: 0, document level (indexed): 0
 ## Content:  documents: 2551</code></pre>
+<pre class="r"><code>test</code></pre>
+<pre><code>## &lt;&lt;VCorpus&gt;&gt;
+## Metadata:  corpus specific: 0, document level (indexed): 0
+## Content:  documents: 1398</code></pre>
 <p>Then, we had to clean each email. So, I made a function that could do it for each type.</p>
 <pre class="r"><code>list &lt;- c(&quot;date&quot;, &quot;deliveredto&quot;, &quot;received&quot;, &quot;subject&quot;, &quot;localhost&quot;, &quot;returnpath&quot;)
 clean &lt;- function(tmp){
     tmp &lt;- tmp %&gt;% tm_map(content_transformer(PlainTextDocument))
-    tmp &lt;- tmp %&gt;% tm_map(content_transformer(function(x) gsub(x, pattern=&quot;[^a-zA-Z/d/s:]&quot;, replacement=&quot; &quot;))) #regex
+    tmp &lt;- tmp %&gt;% tm_map(content_transformer(function(x) gsub(x, pattern=&quot;[^a-zA-Z/d/s:]&quot;, replacement=&quot;&quot;))) #deletes all weird symbols
     tmp &lt;- tmp %&gt;% tm_map(content_transformer(function(x) iconv(enc2utf8(x), sub = &quot;byte&quot;)))
     tmp &lt;- tmp %&gt;% tm_map(removePunctuation) #remove punctuation
     tmp &lt;- tmp %&gt;% tm_map(removeNumbers)     #remove numbers
@@ -179,6 +183,7 @@ clean &lt;- function(tmp){
     tmp &lt;- tmp %&gt;% tm_map(stripWhitespace)    #remove extraneous spaces
     tmp &lt;- tmp %&gt;% tm_map(stemDocument) #truncates words
     tmp &lt;- tmp %&gt;% tm_map(content_transformer(function(x) removeWords(x, words = list)))
+    tmp &lt;- tmp %&gt;% tm_map(removeWords, stopwords('english'))
     return(tmp)
 }</code></pre>
 <p>Then, we make a vector, both, that contains both.</p>
@@ -186,9 +191,10 @@ clean &lt;- function(tmp){
 clean.spam &lt;- spam %&gt;% clean()
 clean.test &lt;- test %&gt;% clean()</code></pre>
 <p>Next, I created a document term matrix and removed sparse terms for the whole set, the ham set, and the spam set.</p>
-<pre class="r"><code>final.ham &lt;- clean.ham %&gt;% DocumentTermMatrix() %&gt;% removeSparseTerms(.9)
-final.spam &lt;- clean.spam %&gt;% DocumentTermMatrix() %&gt;% removeSparseTerms(.9)
-final.test &lt;- clean.test %&gt;% DocumentTermMatrix() %&gt;% removeSparseTerms(.9)</code></pre>
+<pre class="r"><code>sparsity = .95 #picked through testing such that in maximizes the distance between ham and test
+final.ham &lt;- clean.ham %&gt;% DocumentTermMatrix() %&gt;% removeSparseTerms(sparsity)
+final.spam &lt;- clean.spam %&gt;% DocumentTermMatrix() %&gt;% removeSparseTerms(sparsity)
+final.test &lt;- clean.test %&gt;% DocumentTermMatrix() %&gt;% removeSparseTerms(sparsity)</code></pre>
 <p>Finally, I made a matrix for each frequency table.</p>
 <pre class="r"><code># Ham
 ham.freq &lt;- final.ham %&gt;% as.matrix %&gt;% colSums() %&gt;% as.data.frame() %&gt;% rownames_to_column(&quot;string&quot;)
@@ -203,193 +209,171 @@ test.freq &lt;- final.test %&gt;% as.matrix %&gt;% colSums() %&gt;% as.data.fram
 colnames(test.freq) &lt;- c('string', 'count')</code></pre>
 <p>Then, I merged the tables and converted the ‘NAs’ to 0.</p>
 <pre class="r"><code># Ham and Spam 1
-table &lt;- merge(x = ham.freq, y = spam.freq, by = 'string')
+table &lt;- merge(x = ham.freq, y = spam.freq, by = 'string', all.y = TRUE)
 table &lt;- table %&gt;% mutate_all(funs(replace(., is.na(.), 0))) %&gt;% as.data.frame()
 colnames(table) &lt;- c('string', 'ham.count', 'spam1.count')
 row.names(table) &lt;- NULL
 
 # Ham, Spam 1, and Spam 2
-table2 &lt;- merge(x = table, y = test.freq, by = 'string')
+table2 &lt;- merge(x = table, y = test.freq, by = 'string', all.y = TRUE)
 table2 &lt;- table2 %&gt;% mutate_all(funs(replace(., is.na(.), 0))) %&gt;% as.data.frame()
 colnames(table2) &lt;- c('string', 'ham.count', 'spam1.count', 'spam2.count')
 row.names(table2) &lt;- NULL
-table2</code></pre>
-<pre><code>##           string ham.count spam1.count spam2.count
-## 1          about      1456         984         759
-## 2          admin      6342         973         724
-## 3          after       461         434         294
-## 4            all      1701        2626        1981
-## 5           also       746         720         509
-## 6            and     11315       14340       10518
-## 7            ani       871        1290         891
-## 8            are      2614        3934        2970
-## 9          ascii      1138         339         250
-## 10           aug      5182        2497        1293
-## 11        becaus       652         561         384
-## 12          been       847         774         566
-## 13      beenther      1537         216         155
-## 14           bit      1260        1211         939
-## 15         build       548         384         314
-## 16          bulk      1668         590         433
-## 17           but      2438         867         635
-## 18           can      1962        2448        1895
-## 19         chang       652         410         292
-## 20       charset      1471        2130        1533
-## 21         check       520         594         517
-## 22           com     33898       24398       19776
-## 23          come       359         471         343
-## 24       content      3874        5425        3878
-## 25         could       651         388         294
-## 26         deliv      3611        1374         863
-## 27           doe       448         531         364
-## 28         dogma      3760        1921        1320
-## 29           don       938         865         612
-## 30          drop      2484        1115         630
-## 31           edt      1403        1042         770
-## 32         email      1968        3665        2885
-## 33         encod      1649        1558        1151
-## 34         error      1817         444         298
-## 35         esmtp      8712        4257        3143
-## 36          even       620         557         455
-## 37     fetchmail      2426        1003         543
-## 38          find       524         675         528
-## 39         first       659         677         528
-## 40           for     16195       14527       10560
-## 41        format       359         312         232
-## 42          free       652        3163        2329
-## 43           fri      2539        1434         914
-## 44        friend       935         414         330
-## 45          from     23279       15846       11586
-## 46           get      1598        2065        1559
-## 47          give       409         432         324
-## 48          good       548         412         338
-## 49           has      1613        1038         733
-## 50          have      2910        3367        2487
-## 51          help      3483        1124         831
-## 52          here       591        2207        1693
-## 53           how       683        1218         907
-## 54          html       882        3364        2670
-## 55       httpwww      2597        6097        4690
-## 56          imap      2441         736         395
-## 57          into       710         561         437
-## 58           iso       367        1221         885
-## 59           ist      4389        1365         617
-## 60        jmason      4578        1523         931
-## 61          just      1264        1246         932
-## 62          know       597         576         436
-## 63           lab       713        2004        1795
-## 64          like      1280         883         691
-## 65          line       688         575         465
-## 66          list     18827        3994        3015
-## 67          long       469         356         289
-## 68          look       669         650         499
-## 69          mail      4431        6051        4404
-## 70        mailer       884         996         704
-## 71       mailman      1575         223         162
-## 72          make       865        1476        1044
-## 73          mani       457         562         422
-## 74           may       599        2705        2443
-## 75        messag      4237        2940        2161
-## 76     microsoft       668        1380         984
-## 77          mime      1715        1940        1417
-## 78           mon      3870        2671        1981
-## 79          more      1254        2003        1480
-## 80          most       628         618         483
-## 81          much       468         525         404
-## 82          name       446        3899        2794
-## 83          need       645        1003         747
-## 84           net     17126       10548        8717
-## 85    netnoteinc      1274        4054        3924
-## 86           new      1064        1898        1415
-## 87        normal       659         881         592
-## 88           not      2800        3000        2096
-## 89           now       867        1496        1137
-## 90           old       386         301         220
-## 91           one      1592        1680        1264
-## 92          onli       909        1465        1059
-## 93           org     10984        5373        3140
-## 94        origin      1007         283         199
-## 95         other      1114         836         622
-## 96           out      1153        1841        1328
-## 97       outlook       368         417         295
-## 98          over       561         979         719
-## 99           own       405         578         423
-## 100         path      2660        1748        1221
-## 101        peopl       956        1247         858
-## 102        phobo      1253         968         673
-## 103         post      1827         527         404
-## 104      postfix      4859        1578         972
-## 105       preced      1748         394         303
-## 106     prioriti       590         989         707
-## 107       produc       331         306         211
-## 108         quot      1148        1564        1263
-## 109         real       515         389         313
-## 110       receiv     14481       10370        7447
-## 111        repli      2127        1521        1128
-## 112       report       751        1250         795
-## 113      request      4562         842         623
-## 114       requir      2393         400         274
-## 115       return      3021        2142        1534
-## 116        right       560        2006        1471
-## 117          see       652         614         472
-## 118       sender      2106         601         467
-## 119        singl      2556        1127         648
-## 120     slashnul      3760        1920        1319
-## 121         smtp      1637        2425        1733
-## 122         some      1060         463         351
-## 123   sourceforg      6980         972         776
-## 124 spamassassin      2976        1021        1004
-## 125      sponsor       418         226         215
-## 126     subscrib      3112         556         404
-## 127          sun      1024        1128         893
-## 128       system       720         573         462
-## 129         take       494         647         480
-## 130         text       928        1830        1358
-## 131    textplain      2193         826         565
-## 132         than       807         713         553
-## 133        thank       339         454         362
-## 134         that      6655        4161        2951
-## 135          the     24105       21014       14986
-## 136        their      1115         768         553
-## 137         them       774         746         562
-## 138         then       765         590         448
-## 139        there      1511         798         604
-## 140        these       540         741         564
-## 141         they      1862         937         731
-## 142         this      3943        6938        4999
-## 143        those       440         429         283
-## 144      through       395         443         306
-## 145          thu      4224        1858        1361
-## 146         time      1603        2191        1688
-## 147     transfer      1034        1702        1230
-## 148          tue      3224        2003        1533
-## 149         type      2645        4460        3165
-## 150      unknown       471         439         314
-## 151   unsubscrib      3412         819         587
-## 152          use      2705        1482        1183
-## 153         user      6248         442         284
-## 154         veri       434         510         389
-## 155      version      5875        2510        1928
-## 156         want       652        1091         817
-## 157          was      2185        1090         711
-## 158          way       720         563         428
-## 159          wed      3851        1859        1406
-## 160         well       481         334         226
-## 161         what      1223        1013         766
-## 162         when      1012         631         467
-## 163          whi       376         324         249
-## 164        which      1172         682         498
-## 165          who       952         862         583
-## 166         will      1498        3554        2667
-## 167       window       483         703         502
-## 168         with     16652       11614        8292
-## 169         work      1089        1196         916
-## 170        world       789         470         356
-## 171        would      1122         708         525
-## 172         year       675        1080         758
-## 173          you      3952       13981       10331
-## 174         your      1254        9042        6969
-## 175         yyyi      2879        1360        1360</code></pre>
+table</code></pre>
+<pre><code>##                                                    string ham.count
+## 1                                                    bodi         0
+## 2                                                    brbr         0
+## 3                            bylocalhostwithimapfetchmail      2409
+## 4                             bylocalhostwithpopfetchmail         0
+## 5                                                  center         0
+## 6                                              charsetiso         0
+## 7                                           charsetwindow         0
+## 8                              contenttransferencodingbas         0
+## 9                              contenttransferencodingbit       936
+## 10                     contenttransferencodingquotedprint         0
+## 11                                    contenttypetexthtml         0
+## 12                          contenttypetexthtmlcharsetiso         0
+## 13                      contenttypetexthtmlcharsetusascii         0
+## 14                                   contenttypetextplain         0
+## 15                         contenttypetextplaincharsetiso       261
+## 16                     contenttypetextplaincharsetusascii       935
+## 17                                             datewedjul         0
+## 18                      deathtospamdeathtospamdeathtospam         0
+## 19                    deliveredtoforkspamassassintaintorg         0
+## 20                  deliveredtoyyyylocalhostnetnoteinccom       369
+## 21                           deliveredtoyyyynetnoteinccom         0
+## 22                     deliveredtozzzzlocalhostexamplecom       139
+## 23                      deliveredtozzzzlocalhostjmasonorg         0
+## 24                                                    div         0
+## 25                                           divaligncent         0
+## 26               doctypehtmlpublicwcdtdhtmltransitionalen         0
+## 27                                                  email         0
+## 28                           envelopefromcpunkshqpronsnet         0
+## 29                               errorstoforkadminxentcom       699
+## 30                                                   font         0
+## 31                                forjmlocalhostmonjuledt         0
+## 32                      forjmlocalhostsingledropmonjulist         0
+## 33                                                   form         0
+## 34                                                   head         0
+## 35                                                   html         0
+## 36 httpslistssourceforgenetlistslistinfospamassassinsight         0
+## 37                                     httpthinkgeekcomsf         0
+## 38                         httpxentcommailmanlistinfofork         0
+## 39                                         importancenorm       134
+## 40                   listidfriendsofrohitkhareforkxentcom       699
+## 41                                               mimevers      1465
+## 42                                                   name         0
+## 43                                                 pnbspp         0
+## 44                                         precedencebulk      1658
+## 45                            receivedfromcpunkslocalhost         0
+## 46                          receivedfromdogmaslashnullorg         0
+## 47                        receivedfromeinsteinsszcomcpunk         0
+## 48                        receivedfromhqpronsnetlocalhost         0
+## 49                                   receivedfromjalapeno      1838
+## 50       receivedfromlairxentcomlocalhostbyxentcompostfix       699
+## 51                          receivedfromlocalhostjalapeno      1814
+## 52                         receivedfromlocalhostlocalhost       571
+## 53                             receivedfrommailwebnotenet         0
+## 54                 receivedfrommandarklabsnetnoteinccombi         0
+## 55                                      receivedfromphobo       571
+## 56                 receivedfromwebnotenetmailwebnotenetbi         0
+## 57                             returnpathforkadminxentcom       699
+## 58                                 senderforkadminxentcom       703
+## 59               spamassassinsightingslistssourceforgenet         0
+## 60                       spamassassinsightingsmailinglist         0
+## 61                                                   tabl         0
+## 62                                                  tbodi         0
+## 63                    thisisamultipartmessageinmimeformat         0
+## 64                   thissfnetemailissponsoredbythinkgeek         0
+## 65                                    toyyyynetnoteinccom         0
+## 66       versiontlsvsslvcipheredhdssdescbcshabitsverifyno         0
+## 67                                    welcometogeekheaven         0
+## 68                     xbeenthereforkspamassassintaintorg         0
+## 69                                               xkeyword         0
+## 70                         xmailermicrosoftoutlookexpress         0
+## 71                                           xmailmanvers      1250
+## 72                    xmimeoleproducedbymicrosoftmimeolev       227
+## 73                                    xmsmailprioritynorm       229
+## 74                                              xprioriti       133
+## 75                                          xprioritynorm       161
+## 76                                                xstatus         0
+##    spam1.count
+## 1          895
+## 2          325
+## 3          730
+## 4          273
+## 5          868
+## 6          240
+## 7          114
+## 8          129
+## 9          781
+## 10         622
+## 11         302
+## 12         518
+## 13         166
+## 14         257
+## 15         287
+## 16         125
+## 17          97
+## 18         162
+## 19         102
+## 20         474
+## 21         133
+## 22         207
+## 23         253
+## 24         587
+## 25         274
+## 26         109
+## 27         116
+## 28         153
+## 29         102
+## 30         538
+## 31         121
+## 32         107
+## 33         152
+## 34        1016
+## 35        1348
+## 36         173
+## 37         129
+## 38         102
+## 39         202
+## 40         102
+## 41        1575
+## 42         110
+## 43         309
+## 44         331
+## 45         339
+## 46         199
+## 47         102
+## 48         153
+## 49         277
+## 50         102
+## 51         276
+## 52         736
+## 53         210
+## 54         455
+## 55         254
+## 56         239
+## 57         102
+## 58         102
+## 59         173
+## 60         173
+## 61        1814
+## 62         640
+## 63         181
+## 64         129
+## 65         170
+## 66         243
+## 67         129
+## 68         102
+## 69         587
+## 70         293
+## 71         188
+## 72         184
+## 73         365
+## 74         336
+## 75         206
+## 76         124</code></pre>
 <p>Then, I did a <span class="math inline">\(\chi^2\)</span>-test to see if the there was a significant difference between these two categories.</p>
 <pre class="r"><code>value1 &lt;- chisq.test(table2$ham.count, table2$spam1.count)</code></pre>
 <pre><code>## Warning in chisq.test(table2$ham.count, table2$spam1.count): Chi-squared
@@ -405,20 +389,152 @@ table2</code></pre>
 ##  Pearson's Chi-squared test
 ## 
 ## data:  table2$ham.count and table2$spam1.count
-## X-squared = 28114, df = 27880, p-value = 0.1611</code></pre>
+## X-squared = 1452.8, df = 912, p-value &lt; 2.2e-16</code></pre>
 <pre class="r"><code>value2</code></pre>
 <pre><code>## 
 ##  Pearson's Chi-squared test
 ## 
 ## data:  table2$ham.count and table2$spam2.count
-## X-squared = 27212, df = 27060, p-value = 0.2555</code></pre>
+## X-squared = 1351.5, df = 1008, p-value = 2.01e-12</code></pre>
 <pre class="r"><code>value3</code></pre>
 <pre><code>## 
 ##  Pearson's Chi-squared test
 ## 
 ## data:  table2$spam1.count and table2$spam2.count
-## X-squared = 28219, df = 28050, p-value = 0.2377</code></pre>
-<p>As we can see from the test, a naive chi-square test can work as a classifier. The first result tells us that there is a difference between the two sets (ham, spam1) at an 80% confidence level. However, there’s as much variation between spam sets as there is between the ham and spam2 sets. Without further data parsing, this classifier yields misleading results.</p>
+## X-squared = 5241, df = 3591, p-value &lt; 2.2e-16</code></pre>
+<p>As we can see from the test, a naive chi-square test can work as a classifier. In this case, we can set our critical value to .005 on a two tailed test. This equates to a confidence interval of 99.9%. ## An Example Implementation</p>
+<pre class="r"><code>test &lt;- file.path[4] %&gt;% DirSource() %&gt;% VCorpus()
+clean.test &lt;- test %&gt;% clean()
+final.test &lt;- clean.test %&gt;% DocumentTermMatrix() %&gt;% removeSparseTerms(.1)
+test.freq &lt;- final.test %&gt;% as.matrix %&gt;% colSums() %&gt;% as.data.frame() %&gt;% rownames_to_column(&quot;string&quot;)
+colnames(test.freq) &lt;- c('string', 'test.case')
+test.freq</code></pre>
+<pre><code>##                                                                                                                                                                                                                                                                                                                                                                                           string
+## 1                                                                                                                                                                                                                                                                                                                                                                                   attnsirmadan
+## 2                                                                                                                                                                                                                                                                                                                                                           bydogmaslashnullorgwithesmtpidgbifor
+## 3                                                                                                                                                                                                                                                                                                                                                                byjmasonorgpostfixwithesmtpiddf
+## 4                                                                                                                                                                                                                                                                                                                                                                   bylocalhostwithimapfetchmail
+## 5                                                                                                                                                                                                                                                                                                                                                                     contenttransferencodingbit
+## 6                                                                                                                                                                                                                                                                                                                                                                 contenttypetextplaincharsetiso
+## 7                                                                                                                                                                                                                                                                                                                                                                                     dateweddec
+## 8                                                                                                                                                                                                                                                                                                                                                                deliveredtolinuxieiluglocalhost
+## 9                                                                                                                                                                                                                                                                                                                                                   deliveredtoyyyylocalhostspamassassintaintorg
+## 10                                                                                                                                                                                                                                                                                                                                                                       errorstoilugadminlinuxi
+## 11                                                                                                                                                                                                                                                                                                                                                             forjmlocalhostsingledropweddecgmt
+## 12                                                                                                                                                                                                                                                                                                                                                                       forjmlocalhostweddecgmt
+## 13                                                                                                                                                                                                                                                                                                                                                                    fromilugadminlinuxieweddec
+## 14                                                                                                                                                                                                                                                                                                                                            fromwilsonkamelanetscapenetwilsonkamelanetscapenet
+## 15                                                                                                                                                                                                                                                                                                                                      httpwwwlinuxiemailmanlistinfoilugforunsubscriptioninform
+## 16                                                                                                                                                                                                               iampleasedtointroducemyselftoyoumynameismrwilsonkamelaanativeofsouthafricaandasenioremployeeofminesandnaturalresourcesdepartmentcurrentlyonatrainningcourseinhollandforfewmonth
+## 17 iamwritingthislettertorequestyourassistanceinordertoredeemaninvestmentwiththesouthafricanminingcorporationthesaidinvestmentnowvaluedatmilliondollarsfifteenmillionfivehundredthousanddollarsonlywaspurchasedbylucioharperandcontractedouttothesouthafricanminingcorporationinnowrecognisedasminesandnaturalresourcesdepartmentthisredeemableinvestmentinteresthasnowmaturedsincemarchlastyear
+## 18                                                                                                                                                                                                                                                                                                                                                                irishlinuxusersgroupiluglinuxi
+## 19                                                                                                       iwillappreciateifyoucangiveyourassuranceandguaranteethatoursharewillbewellsecuredpleaseforthesakeofconfidentialityreachmeonmyemailaddresswilsonkamelamailcompleaseletmeknowifthisproposalisacceptabletoyoukindlyreachmeimmediatelywithanyofthestatedcontactaddressessothatbetterclearif
+## 20                                                                                                            iwillliketoassureyouthatthereisabsolutelynothingtoworryaboutbecauseitisperfectlysafewithnoriskinvolvedpleaseensuretokeepthismatterstrictlyconfidentialmypartnerwillfileaclaimforthismoneyonyourbehalffromthesouthafricanminingcorporationwhentheclaimisapprovedyouasthebeneficiari
+## 21                                                                                                                                                                                                                                                                                                                                                                      jmilugjmasonorgweddecgmt
+## 22                                                                                                                                                                                                                                                                                                                                                        listarchivehttpwwwlinuxiepipermaililug
+## 23                                                                                                                                                                                                                                                                                                                                                   listhelpmailtoilugrequestlinuxiesubjecthelp
+## 24                                                                                                                                                                                                                                                                                                                                                          listidirishlinuxusersgroupiluglinuxi
+## 25                                                                                                                                                                                                                                                                                                                                                                listmaintainerlistmasterlinuxi
+## 26                                                                                                                                                                                                                                                                                                                                                                      listpostmailtoiluglinuxi
+## 27                                                                                                                                                                                                                                                                                                                                                listsubscribehttpwwwlinuxiemailmanlistinfoilug
+## 28                                                                                                                                                                                                                                                                                                                                              listunsubscribehttpwwwlinuxiemailmanlistinfoilug
+## 29                                                                                                                                                                                                                                                                                                                                                lughtuathaorgpostfixwithsmtpidddeforiluglinuxi
+## 30                                                                                                                                                                                                                                                                                                                                                       mailtoilugrequestlinuxiesubjectsubscrib
+## 31                                                                                                                                                                                                                                                                                                                                                     mailtoilugrequestlinuxiesubjectunsubscrib
+## 32                                                                                                                                                                                                                                                                                                                                                                     messageidddelughtuathaorg
+## 33                                                                                                                                                                                                                                                                                                                                                                                      mimevers
+## 34                                                                                                                                                                                                                                                                                                                                                                 postfixwithesmtpidbcweddecgmt
+## 35                                                                                                                                                                                                                                                                                                                                                                                precedencebulk
+## 36                                                                                                                                                                                                                                                                                                                                                                          receivedfromjalapeno
+## 37                                                                                                                                                                                                                                                                                                                                                                 receivedfromlocalhostjalapeno
+## 38                                                                                                                                                                                                                                                                                                                                             receivedfromlughtuathaorglocalhostbylughtuathaorg
+## 39                                                                                                                                                                                                                                                                                                                                                 receivedfromlughtuathaorgpostfixlughtuathaorg
+## 40                                                                                                                                                                                                                                                                                                                                                          receivedfrommailtuathaorgnodeccanlbi
+## 41                                                                                                                                                                                                                                                                                                                                                  relatingtothetransactionwillbeexplainedtoyou
+## 42                                                                                                                                                                                                                                                                                                                                                                     returnpathilugadminlinuxi
+## 43                                                                                                                                                                                                                                                                                                                                                                         senderilugadminlinuxi
+## 44                                                                                                                                                                                                                     sincemarchlastyearseveralattemptshavebeenmadetocontactlucioharperwithoutsuccessandthereisnowaytocontactanyofhiscloserelativesinwhosefavourtheinvestmentcashvaluecanbepaid
+## 45                                                                                                                                                                        sincethismoneycanbepaiddirectlyintoanybankaccountofyourchoiceyouhaveresponsibilitytoensurethatmypartnerandireceiveofthetotalamouthwhilethebalancewillbesetasideforanyunforseenexpensesinthecauseoftransferingthismoney
+## 46                                                                                                                                                                                               sincewehaveaccesstoalllucioharpersinformationwecanclaimthismoneywiththehelpofmypartnerswiththesouthafricanminesandnaturalresourcesdepartmentallwehavetodoistofileclaimusingyouaslucioharpersrel
+## 47                                                                                                                                                                                                                                                                                                                                                                            strictlyconfidenti
+## 48                                                                                                                                                                                                                                                                                                                                                                       subjectilugwilsonkamela
+## 49                                                                                                                                                                                                                                                                                                                                                                                  toiluglinuxi
+## 50                                                                                                                                                                                                                                                                                                                                                                                     trulyyour
+## 51                                                                                                                                                                                                                                                                                                                                                                                     weddecgmt
+## 52                                                                                                                                                                                                                                                                                                                                                                    willbepaidofthetotalamouth
+## 53                                                                                                                                                                                                                                                                                                                                                                                  wilsonkamela
+## 54                                                                                                                                                                                                                                                                                                                                                                          xbeenthereiluglinuxi
+## 55                                                                                                                                                                                                                                                                                                                                                                                  xmailmanvers
+## 56                                                                                                                                                                                                                                                                                                                                                                           xoriginaldateweddec
+##    test.case
+## 1          1
+## 2          1
+## 3          1
+## 4          1
+## 5          1
+## 6          1
+## 7          1
+## 8          1
+## 9          1
+## 10         1
+## 11         1
+## 12         1
+## 13         1
+## 14         1
+## 15         1
+## 16         1
+## 17         1
+## 18         1
+## 19         1
+## 20         1
+## 21         1
+## 22         1
+## 23         1
+## 24         1
+## 25         1
+## 26         1
+## 27         1
+## 28         1
+## 29         1
+## 30         1
+## 31         1
+## 32         1
+## 33         1
+## 34         1
+## 35         1
+## 36         1
+## 37         1
+## 38         1
+## 39         1
+## 40         1
+## 41         1
+## 42         1
+## 43         1
+## 44         1
+## 45         1
+## 46         1
+## 47         1
+## 48         1
+## 49         1
+## 50         1
+## 51         1
+## 52         1
+## 53         1
+## 54         1
+## 55         1
+## 56         1</code></pre>
+<pre class="r"><code>table3 &lt;- merge(x = table, y = test.freq, by = 'string')
+table3 &lt;- table3 %&gt;%  as.data.frame()
+table3</code></pre>
+<pre><code>##                           string ham.count spam1.count test.case
+## 1   bylocalhostwithimapfetchmail      2409         730         1
+## 2     contenttransferencodingbit       936         781         1
+## 3 contenttypetextplaincharsetiso       261         287         1
+## 4                       mimevers      1465        1575         1
+## 5                 precedencebulk      1658         331         1
+## 6           receivedfromjalapeno      1838         277         1
+## 7  receivedfromlocalhostjalapeno      1814         276         1
+## 8                   xmailmanvers      1250         188         1</code></pre>
 </div>
 
 
