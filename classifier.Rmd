@@ -1,0 +1,191 @@
+---
+title: Project 4
+author: @simplymathematics
+date: "November 4, 2018"
+output: html_document
+---
+
+# Spam Classifier 
+
+## Dependencies
+
+The following dependencies were used to complete the assignment:  
+
+```{r library, eval=TRUE, message=FALSE, warning=FALSE}
+library(knitr) 
+library(kableExtra)
+library(tidyverse)
+library(tm)
+library(SnowballC) 
+library(RTextTools)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+```
+
+## Getting Started 
+
+I used a browser to download the easy, hard, and spam folders from the link provided. I then used the command line ```tar``` utility to unzip them. 
+
+#### Load the Data
+
+Below, I used a volatile corpora to build a statistical model for each the spam and the ham. Because this is a 1st semester assignment, I decided to use the easy ham folder.
+
+```{r}
+spam <- VCorpus(DirSource("spam"), readerControl = list(language = "en")) 
+ham <- VCorpus(DirSource("easy_ham"), readerControl = list(language = "en")) 
+```
+
+####  Brief Examination of data
+We can see from the below that each corpora contains a data structure with 500 spam documents and 2500 non-spam ones.
+```{r}
+spam
+ham
+```
+
+#### Labelling
+Below, we label each group by looping through each independent data structure. An added metadata point is 1 if it is spam, 0 otherwise.
+```{r}
+for (i in 1:length(spam)){
+  meta(spam[[i]], "spam", "corpus") <- "1"
+}
+
+for (i in 1:length(ham)){
+  meta(ham[[i]], "spam", "corpus") <- "0"
+}
+
+```
+
+#### Testing
+
+Below, we set a seed and sample approximately 10% of the data.
+
+```{r}
+set.seed(1)
+test <- sample(c(ham, spam))
+
+labels <- data.frame(unlist(meta(test, "spam"))) 
+table(labels)
+
+```
+
+## Corpus Transformations
+
+
+```{r view test content, eval=TRUE}
+meta(test[[1]])
+strwrap(test[[1]]$content[1:20])
+```
+
+I used the map function to clean up the data. Regex was used to clean up email addresses and make all content lower case. I removed numbers and punctuation to make word parsing easier.
+
+```{r transform corpus, eval=TRUE, cache=TRUE}
+stop <- c("date", "deliveredto", "received", "subject", "localhost", "returnpath") 
+parsed.text <- test %>% 
+  tm_map(content_transformer(tolower)) %>% # transform to lower case 
+  tm_map(content_transformer(function(x) gsub(x, pattern="\\S*\\.\\S*", replacement=" "))) %>%  # Maps sentences to content
+  tm_map(content_transformer(function(x) gsub(x, pattern="\\S*\\@\\S*", replacement=" "))) %>%  # Maps email addresses
+  tm_map(content_transformer(removePunctuation)) %>% # Removes Punctuation
+  tm_map(content_transformer(removeNumbers)) %>% # Removes Numers
+  tm_map(content_transformer(PlainTextDocument)) %>% # Ensures correct encoding
+  tm_map(content_transformer(function(x) removeWords(x, words = c(stop, stopwords("en"))))) %>% #stopwords
+  tm_map(stemDocument) %>% # stem document 
+  tm_map(content_transformer(stripWhitespace)) # remove white space
+
+parsed.text
+```
+
+## Document Term Matrix 
+
+Next, I used the newly transformed corpus, `test_tm`, to create a [Document Term Matrix](https://www.rdocumentation.org/packages/tm/versions/0.7-5/topics/TermDocumentMatrix) (DTM). The DTM creates a vector frequencies of terms used in the corpus, which we can inspect below: 
+
+```{r dtm, eval=TRUE}
+test_dtm <- DocumentTermMatrix(test_tm) 
+kable(inspect(test_dtm), caption = 'Inspect Initial DTM', format = "html") %>%
+  kable_styling(bootstrap_options = "condensed", full_width = F, position = "left") %>%
+  row_spec(row = 0:0, background = "lightgrey") %>%
+  column_spec(column = 1, bold = T)
+```
+
+As you can see, there are 58,606 total terms used in the 3,052 test corpus documents, with a meximal term length of 298. 
+
+#### Refine Terms 
+
+To refine the DTM results, I introduced new controls that affect the sparsity and length of terms. The non-/sparse entries and sparsity percent output show the relative frequency that a term appears in a document. I used the `removeSparseTerms` function below to set the sparcity to 95% and remove less frequent terms from the matrix. In addition, I set word length controls to only account for terms between the length of 4 and 20 characters. 
+
+```{r refine dtm, eval=TRUE}
+refine_test <- test_tm %>% 
+  DocumentTermMatrix(control=list(wordLengths=c(4, 20))) %>% 
+  removeSparseTerms(.95)
+
+kable(inspect(refine_test), caption = 'Inspect Refined DTM', format = "html") %>%
+  kable_styling(bootstrap_options = "condensed", full_width = F, position = "left") %>%
+  row_spec(row = 0:0, background = "lightgrey") %>%
+  column_spec(column = 1, bold = T)
+```
+
+#### Term Frequencies
+
+```{r frequencies, eval=TRUE}
+term_freq <- refine_test %>% 
+  as.matrix %>% 
+  colSums() %>% 
+  sort(decreasing=TRUE)
+
+kable(head(term_freq, 10)) 
+
+terms <- data.frame(term=names(term_freq), frequency=term_freq)
+
+plot <- ggplot(subset(terms, frequency>1000), aes(x = reorder(term, -frequency), y = frequency)) +
+  geom_bar(stat = "identity", fill='grey') +
+  theme(axis.text.x=element_text(angle=90, hjust=1)) +
+  labs(title = "Terms with Frequencies > 1000", x = "Term", "Frequency")
+plot
+
+```
+
+## Predictive Models 
+
+I set up an SVM and Maxent predicitive models to train and classify to indicate whether or not an email should be marked as spam. The steps for this section are outlined below: 
+
+```{r predictive models, eval=TRUE}
+# Create loop to lable spam indicator 
+indicator<-c()
+for(i in 1:length(test_tm)){
+  indicator<-c(indicator,test_tm[[i]]$meta$spam)
+}
+
+# randomize data and set up model container using 75% probability 
+set.seed(100) 
+probs <- runif(length(test_tm),0,1) 
+train <- which(probs<=.75) 
+test <- which(probs>.75)
+
+# build container for model from DTM 
+container <- create_container(refine_test, labels = indicator, trainSize = train, testSize = test, virgin = FALSE)
+
+# use container to train models 
+train_svm <- train_model(container, "SVM")
+train_max <-train_model(container, "MAXENT")
+
+# use trained models to classify new data
+classify_svm <- classify_model(container, train_svm)
+classify_max <-classify_model(container, train_max)
+
+# view output of models  
+svm <- head(classify_svm, 10)
+max <- head(classify_max, 10)
+  
+kable(svm, caption = 'SVM Model Output', format = "html") %>%
+  kable_styling(bootstrap_options = "condensed", full_width = F, position = "left") %>%
+  column_spec(column = 1, bold = T)
+
+kable(max, caption = 'Maxent Model Output', format = "html") %>%
+  kable_styling(bootstrap_options = "condensed", full_width = F, position = "right") %>%
+  column_spec(column = 1, bold = T)
+```
+
+
+
+
