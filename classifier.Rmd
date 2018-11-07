@@ -16,6 +16,8 @@ As always, we start with dependencies
 ```{r}
 require(tm)
 require(tidyverse)
+require(e1071)
+require(mlr)
 ```
 
 Here, we gather our data
@@ -36,6 +38,7 @@ test
 ```
 
 Then, we had to clean each email. So, I made a function that could do it for each type.
+
 ```{r}
 list <- c("date", "deliveredto", "received", "subject", "localhost", "returnpath")
 clean <- function(tmp){
@@ -45,7 +48,7 @@ clean <- function(tmp){
     tmp <- tmp %>% tm_map(removePunctuation) #remove punctuation
     tmp <- tmp %>% tm_map(removeNumbers)     #remove numbers
     tmp <- tmp %>% tm_map(content_transformer(tolower)) #change to low case
-    tmp <- tmp %>% tm_map(stemDocument) #truncates words
+    tmp <- tmp %>% tm_map(stemDocument) #truncates words to remove word endings and reduce our library set
     tmp <- tmp %>% tm_map(content_transformer(function(x) removeWords(x, words = list)))
     tmp <- tmp %>% tm_map(removeWords, stopwords('english'))
     return(tmp)
@@ -64,7 +67,6 @@ sparsity = .93 #picked through testing such that in maximizes the distance betwe
 final.ham <- clean.ham %>% DocumentTermMatrix() %>% removeSparseTerms(sparsity)
 final.spam <- clean.spam %>% DocumentTermMatrix() %>% removeSparseTerms(sparsity)
 final.test <- clean.test %>% DocumentTermMatrix() %>% removeSparseTerms(sparsity)
-
 ```
 Finally, I made a matrix for each frequency table.
 ```{r}
@@ -99,23 +101,10 @@ row.names(table2) <- NULL
 
 ```
 
-Then, I did a $\chi^2$-test to see if the there was a significant difference between these two categories.
-```{r}
-value1 <- chisq.test(table$ham.count, table$spam1.count)
-value2 <- chisq.test(table2$ham.count, table2$spam2.count)
-value3 <- chisq.test(table2$spam1.count, table2$spam2.count)
-value1
-value2
-value3
-```
-As we can see from the test, a naive chi-square test of the word frequencies can work as a classifier. 
-
 ## An Example Implementation
-Below we've implemented an example classifier that tests a file from the spam 2 folder. In this case it is successful, but the correlation values are very close. Therefore, this model may be over-fitting.
+Below we've implemented an example classifier that tests a file from the spam 2 folder. In this case it is successful, but the correlation values are very close. Therefore, this model may be over-fitting. Perhaps we can do better below.
 ```{r}
 foo <- file.path[4] %>% DirSource() %>% VCorpus()
-
-
 foo <- foo %>% clean()
 foo <- foo %>% DocumentTermMatrix() 
 foo <- foo %>% as.matrix %>% colSums() %>% as.data.frame() %>% rownames_to_column("string")
@@ -133,4 +122,52 @@ if (a > b){
 }
 
 ```
+Next, I did a $\chi^2$-test to see if the there was a significant difference between these two categories with the parameters set above.
+```{r}
+value1 <- chisq.test(table$ham.count, table$spam1.count)
+value2 <- chisq.test(table2$ham.count, table2$spam2.count)
+value3 <- chisq.test(table2$spam1.count, table2$spam2.count)
+value1
+value2
+value3
+```
+As we can see from the test, a naive chi-square test of the word frequencies can work as a classifier. To accomodate this test, I labelled and combined the spam and ham data, storing the result in a dataframe called 'both.' Each row contains a frequency table for various terms and a final column called 'status' that indicates whether the email is spam or not (TRUE or FALSE respectively.)
 
+```{r}
+final.ham$status <- rep("FALSE", nrow(final.ham))
+final.ham <- final.ham %>% as.matrix() %>% data.frame()
+final.spam$status <- rep("TRUE", nrow(final.spam))
+final.spam <- final.spam %>% as.matrix() %>% data.frame()
+final.test$status <- rep("TRUE", nrow(final.test))
+final.test <- final.test %>% as.matrix() %>% data.frame()
+final.test
+  
+both <- merge(final.ham, final.spam, all=TRUE)
+both <- both %>% as.matrix() %>% data.frame()
+final.test <- final.test %>% as.matrix() %>% data.frame()
+final.both merge(both, final.test, all=)
+head(both)
+```
+As we saw above, this particular set of terms is sufficient evidence to parse spam from ham. Therefore, the naive bayes model is appropriate. Below, I trained a model using the spam 1 dataset.
+
+```{r}
+task = makeClassifTask(data = both, target = "status")
+trainer = makeLearner("classif.naiveBayes")
+trained = train(trainer, task)
+```
+
+Below is the naive bayes classifier model for each keyword we found. However, further implementation will require cleaning the data and looking only for the keywords deemed important by this model.
+```{r}
+trained$learner.model
+```
+
+```{r}
+#predict(trained$learner.model, task = task, subset = foo)```
+#Read the model learned  
+NB_mlr$learner.model
+ 
+#Predict on the dataset without passing the target feature
+predictions_mlr = as.data.frame(predict(NB_mlr, newdata = Titanic_dataset[,1:3]))
+ 
+##Confusion matrix to check accuracy
+table(predictions_mlr[,1],Titanic_dataset$Survived)
